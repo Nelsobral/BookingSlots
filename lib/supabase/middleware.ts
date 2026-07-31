@@ -15,33 +15,52 @@ export async function updateSession(
 ): Promise<NextResponse> {
   let supabaseResponse = NextResponse.next({ request })
 
-  const supabase = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet: CookieToSet[]) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  // IMPORTANT: Do not run code between createServerClient and getUser().
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // If the Supabase environment variables are not available at runtime
+  // (e.g. a build without them inlined), never crash the whole site with a
+  // 500. Let the request through — server components enforce auth as well.
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error(
+      '[middleware] Missing Supabase env vars; skipping session refresh.'
+    )
+    return supabaseResponse
+  }
+
+  const supabase = createServerClient<Database>(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll()
+      },
+      setAll(cookiesToSet: CookieToSet[]) {
+        cookiesToSet.forEach(({ name, value }) =>
+          request.cookies.set(name, value)
+        )
+        supabaseResponse = NextResponse.next({ request })
+        cookiesToSet.forEach(({ name, value, options }) =>
+          supabaseResponse.cookies.set(name, value, options)
+        )
+      },
+    },
+  })
 
   const { pathname } = request.nextUrl
+
+  // IMPORTANT: Do not run code between createServerClient and getUser().
+  // Guard the network call so a transient Supabase/edge failure degrades
+  // gracefully instead of returning MIDDLEWARE_INVOCATION_FAILED (500).
+  let user: Awaited<
+    ReturnType<typeof supabase.auth.getUser>
+  >['data']['user'] = null
+  try {
+    const result = await supabase.auth.getUser()
+    user = result.data.user
+  } catch (error) {
+    console.error('[middleware] supabase.auth.getUser failed:', error)
+    // Fail open: allow the request; protected server components re-check auth.
+    return supabaseResponse
+  }
 
   // Protected app routes and onboarding require an authenticated user.
   const requiresAuth =

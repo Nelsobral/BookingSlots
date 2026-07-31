@@ -425,6 +425,33 @@ export interface Database {
         Args: { target_business_id: string }
         Returns: boolean
       }
+      get_taken_slots: {
+        Args: { p_business_id: string; p_date: string }
+        Returns: {
+          staff_member_id: string
+          start_time: string
+          end_time: string
+          buffer_minutes_after: number
+        }[]
+      }
+      create_public_booking: {
+        Args: {
+          p_slug: string
+          p_service_id: string
+          p_staff_member_id: string
+          p_date: string
+          p_time: string
+          p_client_name: string
+          p_client_email: string
+          p_client_phone?: string | null
+          p_notes?: string | null
+        }
+        Returns: {
+          booking_id: string
+          start_time: string
+          end_time: string
+        }[]
+      }
     }
     Enums: {
       user_role: UserRole

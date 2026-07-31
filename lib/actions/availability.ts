@@ -99,15 +99,12 @@ export async function getAvailableSlots(params: AvailabilityParams): Promise<{
       .in('staff_member_id', staffIds)
       .eq('date', date);
 
-    // Get existing bookings for this date
-    const { data: bookings } = await supabase
-      .from('bookings')
-      .select('*, staff_members(buffer_minutes_after)')
-      .eq('business_id', business.id)
-      .in('staff_member_id', staffIds)
-      .gte('start_time', `${date}T00:00:00`)
-      .lt('start_time', `${date}T23:59:59`)
-      .in('status', ['pending', 'confirmed']);
+    // Get existing bookings for this date via a SECURITY DEFINER function so
+    // anonymous visitors can detect conflicts without reading booking PII.
+    const { data: takenSlots } = await supabase.rpc('get_taken_slots', {
+      p_business_id: business.id,
+      p_date: date,
+    });
 
     // Calculate slots
     const slots: TimeSlot[] = [];
@@ -146,7 +143,7 @@ export async function getAvailableSlots(params: AvailabilityParams): Promise<{
         const slotEnd = minutes + serviceDuration;
 
         // Check if this slot conflicts with existing bookings
-        const hasConflict = bookings?.some((booking: any) => {
+        const hasConflict = takenSlots?.some((booking) => {
           if (booking.staff_member_id !== staffId) return false;
 
           const bookingStart = timeToMinutes(
@@ -155,7 +152,7 @@ export async function getAvailableSlots(params: AvailabilityParams): Promise<{
           const bookingEnd = timeToMinutes(
             new Date(booking.end_time).toISOString().split('T')[1].substring(0, 5)
           );
-          const bookingBuffer = (booking.staff_members as any)?.buffer_minutes_after || 0;
+          const bookingBuffer = booking.buffer_minutes_after || 0;
 
           // Check if slot overlaps with booking + buffer
           return !(slotEnd + bufferTime <= bookingStart || minutes >= bookingEnd + bookingBuffer);
